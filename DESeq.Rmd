@@ -1,0 +1,272 @@
+---
+title: "DESeq"
+author: "MG"
+date: "3/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r, echo = TRUE}
+#load DESeq2
+library(DESeq2)
+setwd("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio")
+
+directory <- "C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/data/counts"
+
+sampleFiles <- grep("counts",list.files(directory),value=TRUE) 
+sampleFiles 
+ids <- sub("(*).counts.fwd.txt*","\\1",sampleFiles)
+
+sampleCondition <- ids
+
+sampleCondition[c(1,3,5)]<-"NRF2_Up"
+sampleCondition[c(2,4,6)]<-"Control"
+
+sampleTable2 <- data.frame(sampleName = ids, fileName = sampleFiles,condition = sampleCondition)
+
+dds <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable2,directory = directory,design= ~ condition)
+
+dds = DESeq(dds)
+counts(dds)->raw_counts
+raw_counts<-as.data.frame(counts(dds))
+
+#Not necessary to pre-filter low count genes before running the DESeq2 functions, pre-filtering is useful and can be done by removing rows in which there are very few reads, so we reduce the memory size of the dds data object, and increase the speed of the transformation and testing functions within DESeq2
+
+#keep <- rowSums(counts(dds)) >= 10
+#dds <- dds[keep,]
+
+
+
+
+norm_counts = counts(dds, normalized = TRUE)
+
+write.csv(as.data.frame(`norm_counts`),file="C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/norm_counts.csv",quote=FALSE)
+
+
+res<-results(dds)
+rld <- rlog(dds)
+vst<-vst(dds)
+
+#PCA according to vst
+jpeg("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/vst_PCA_plot.jpg")
+plotPCA(vst)
+dev.off()
+
+#PCA according to rld
+jpeg("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/rld_PCA_plot.jpg")
+plotPCA(rld)
+dev.off()
+
+library(ggplot2)
+
+data <- plotPCA(vst, returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+
+jpeg("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/ggplot_PCA_plot.jpg")
+
+ggplot(data, aes(PC1, PC2, color=condition)) +
+  theme_bw() + 
+  theme(panel.background = element_blank())+
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1))+
+  geom_point(size=5)+
+  scale_color_manual(values=c("#74c476","#ec7014","purple"))+
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  theme(plot.title = element_blank())+
+  theme(text = element_text(size=20))+
+  theme(legend.position="bottom") +
+  theme(axis.text = element_text( color = "black", size = 25))+
+  theme(legend.title=element_blank())
+
+dev.off()
+```
+
+
+
+
+## Differential analysis
+```{r DE analysis with DESEQ2}
+
+comparisons = rbind(c("NRF2_Up","Control"))
+
+adj_p_val = 0.05
+
+for(i in 1:nrow(comparisons)){
+  res = results(dds, contrast = c("condition", comparisons[i,1], comparisons[i,2]))
+  res_sig = res[res[,6] < adj_p_val & !is.na(res[,6]) & abs(res[,2]) >1,]
+  assign(paste(comparisons[i,1],"_", comparisons[i,2], sep =""), res)
+  assign(paste(comparisons[i,1],"_", comparisons[i,2],"_sig", sep =""), res_sig)
+}
+
+
+head(`NRF2_Up_Control`)
+dim(`NRF2_Up_Control`)
+row_number<-grep("NFE2L2", rownames(NRF2_Up_Control))
+
+`NRF2_Up_Control`[row_number,]
+
+head(`NRF2_Up_Control_sig`)
+dim(`NRF2_Up_Control_sig`)
+
+write.csv(as.data.frame(`NRF2_Up_Control`),file="C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/NRF2_Up.vs.Control_allresults.csv",quote=FALSE)
+
+
+write.csv(as.data.frame(`NRF2_Up_Control_sig`),file="C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/NRF2_Up.vs.Control_FC1_qval05_results.csv",quote=FALSE)
+
+
+sigRNA<-as.data.frame(`NRF2_Up_Control`)
+sigRNA$log10.pvalue<-(-1*log10(sigRNA$padj))
+sigRNA$Significant.Gene<-"No"
+
+row2<-which(sigRNA$padj<0.05 & abs(sigRNA$log2FoldChange)>1)
+sigRNA$Significant.Gene[row2]<-"Yes"
+sigRNA$Differential_Gene<-sigRNA$Significant.Gene
+sigRNA$Differential_Gene[which(sigRNA$padj<0.05 & sigRNA$log2FoldChange>1)]<-"Up-Regulated"
+sigRNA$Differential_Gene[which(sigRNA$padj<0.05 & sigRNA$log2FoldChange< -1)]<-"Down-Regulated"
+
+```
+
+```{r Volcano plot with ggplot2}
+library(ggplot2)
+library(ggrepel)
+#RNA volcano
+
+#make sure to adjust xlim and ylim based off of the data. Run hist(sigRNA$log2FoldChange) and hist(sigRNA$log10.pvalue) to get an idea
+
+# pick a set of genes to label:
+sigRNA$label<-"No"
+sigRNA$label[which(sigRNA$padj<0.01 & abs(sigRNA$log2FoldChange)>2.5)]<-"Yes"
+sigRNAexport <- data.frame(row.names(sigRNA),sigRNA$label)
+write.csv(as.data.frame(`sigRNAexport`),file="C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/sigRNA_class_thresh.csv",quote=FALSE)
+
+
+#sigRNA$label<-"No"
+#sigRNA$label[which(sigRNA$padj<0.0001 & abs(sigRNA$log2FoldChange)>1)]<-"Yes"
+#sigRNAexport <- data.frame(row.names(sigRNA),sigRNA$label)
+#write.csv(as.data.frame(`sigRNAexport`),file="C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/sigRNA_verysig_thresh.csv",quote=FALSE)
+
+
+#pdf("Volcano.pdf", width=8, height=4,useDingbats=FALSE)
+pRNA <- ggplot(sigRNA, aes(log2FoldChange, log10.pvalue))+
+  geom_point(aes(colour = Differential_Gene),size=1)+
+  scale_colour_manual(values=c("blue", "black","red"))+
+  xlim(-5,5)+
+  ylim(0,6)+
+  xlab(expression(paste(log[2], 'FC(NRF2_Up/Control)')))+
+  ylab(expression(paste(-log[10], '(Q-value)'))) +
+  theme_bw() + 
+  theme(panel.background = element_blank())+
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1))+
+
+  theme(text = element_text(size=10)) +
+  theme(plot.title = element_blank())+
+  theme(axis.text = element_text( color = "black", size = 10))+
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), axis.line=element_line()) +
+  theme(legend.position="none")+
+  geom_vline(xintercept=-1,linetype="dotted")+
+  geom_vline(xintercept=1,linetype="dotted")+
+  geom_text_repel(
+    data = subset(sigRNA, label=="Yes"),
+    aes(label = rownames(sigRNA)[which(label=="Yes")]),
+    size = 5,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.5, "lines")
+  )
+
+
+jpeg("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/volcano_plot.jpg")
+pRNA
+dev.off()
+
+```
+
+
+## Heatmap with DEGs
+```{r Heatmap}
+sig.genes<-rownames(`NRF2_Up_Control_sig`)
+
+#extract raw counts for these genes:
+m<-match(sig.genes,rownames(norm_counts))
+de_norm_counts<-norm_counts[m,]
+
+
+library(pheatmap)
+library(RColorBrewer)
+
+sample<-as.data.frame(sampleTable2$sampleName)
+colnames(sample)<-c("samples")
+rownames(sample)<-colnames(de_norm_counts)
+sample$samples<-as.character(sampleTable2$condition)
+sample2<-sample
+sample2$samples[which(sample2$samples=="Control")]<-"#74c476"
+sample2$samples[which(sample2$samples=="NRF2_Up")]<-"#ec7014"
+sample3 = list(samples = c("Control"= "#74c476", "NRF2_Up"="#ec7014"))
+
+jpeg("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/heatmap_plot.jpg")
+pheatmap(de_norm_counts,scale = "row",show_rownames=FALSE,
+         colorRampPalette(rev(brewer.pal(n = 10, name ="RdBu")))(25),
+         clustering_method = "ward.D2",clustering_distance_cols ="euclidean",
+         annotation_col  = sample, annotation_colors = sample3[1])
+dev.off()
+
+```
+
+```{r Heatmap with GSEA} 
+gsea_genes <- read.csv("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/GSEA_GUI/py_out/top_genes_df.csv")
+
+sig.genes<-rownames(`NRF2_Up_Control_sig`)
+
+#extract raw counts for these genes:
+m<-match(gsea_genes$SYMBOL,rownames(norm_counts))
+de_norm_counts<-norm_counts[m,]
+
+de_norm_counts <- de_norm_counts[apply(de_norm_counts[,-1], 1, function(x) !all(x==0)),]
+write.csv(as.data.frame(`de_norm_counts`),file="C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/de_norm_counts.csv",quote=FALSE)
+
+library(pheatmap)
+library(RColorBrewer)
+
+sample<-as.data.frame(sampleTable2$sampleName)
+colnames(sample)<-c("samples")
+rownames(sample)<-colnames(de_norm_counts)
+sample$samples<-as.character(sampleTable2$condition)
+sample2<-sample
+sample2$samples[which(sample2$samples=="Control")]<-"#74c476"
+sample2$samples[which(sample2$samples=="NRF2_Up")]<-"#ec7014"
+sample3 = list(samples = c("Control"= "#74c476", "NRF2_Up"="#ec7014"))
+
+jpeg("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/GSEA_heatmap_plot.jpg")
+pheatmap(de_norm_counts,scale = "row",show_rownames=FALSE,
+         colorRampPalette(rev(brewer.pal(n = 10, name ="RdBu")))(25),
+         clustering_method = "ward.D2",clustering_distance_cols ="euclidean",
+         annotation_col  = sample, annotation_colors = sample3[1])
+dev.off()
+
+```
+
+```{r rnk file}
+library(tidyverse)
+#x <- read.table("DE_genes.txt",sep = "\t",header = T)
+
+x <- NRF2_Up_Control_sig
+
+x$fcsign <- sign(x$log2FoldChange)
+x$logP=-log10(x$padj)
+x$metric= x$logP/x$fcsign
+x$Gene= row.names(x)
+y<-x[,c("Gene", "metric")]
+yd <- data.frame(y)
+ys <- yd
+
+write.table(yd,file="C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/output/R_out/DE_genes.rnk",quote=F,sep="\t",row.names=F,col.names = F)
+
+
+
+
+```

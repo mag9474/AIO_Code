@@ -1,0 +1,163 @@
+---
+title: "TE"
+author: "MG"
+date: "3/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+setwd("C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio")
+library(DESeq2)
+library(hexbin)
+library(ggplot2)
+library(RColorBrewer)
+
+```
+
+## Including Plots
+
+```{r pressure, echo=FALSE}
+directory <- "C:/Users/sorth/OneDrive/NYU/Semester_3/AMI/R_studio/data/TE"
+sampleFiles <- grep("counts_2*",list.files(directory),value=TRUE)
+sampleFiles
+sampleCondition <- sub("(*)_bowtie_elements_counts_2.txt.*","\\1",sampleFiles)
+sampleCondition
+#edit the sample conditions below:
+sampleCondition[1]<-"cddo-im"
+sampleCondition[2]<-"cddo-im"
+sampleCondition[3]<-"cddo-im"
+sampleCondition[4]<-"control"
+sampleCondition[5]<-"control"
+sampleCondition[6]<-"control"
+```
+
+
+
+```{r pressure, echo=FALSE}
+sampleTable2 <- data.frame(sampleName = sampleFiles, fileName = sampleFiles,condition = sampleCondition)
+dds <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable2,directory = directory,design= ~ condition)
+data<-as.data.frame(counts(dds))
+which(is.na(data))
+#matrix with all samples
+data<-as.data.frame(counts(dds))
+#remove<-read.table("hg38_removeclasses.bed")
+#remove$id<-paste(remove$V1,remove$V2,remove$V3,remove$V4,sep=":")
+#rownames(data)<-remove$id
+data_element=data
+```
+
+
+
+```{r pressure, echo=FALSE}
+#parsing the TE element labels
+repeats_all = read.table("hg38_repeats_all.txt")[,1]
+repeats = as.character(read.table("hg38_repeats_unique.txt")[,1])
+data_repeats = NULL
+data_repeats = t(sapply(repeats, function(re){
+  repeats_rows = colSums(data[which(repeats_all == re),])
+  data_repeats = rbind(data_repeats, repeats_rows)
+}))
+which(is.na(data_repeats))
+rownames(data_repeats) = repeats
+rowsums = rowSums(data_repeats)
+
+```
+
+
+
+
+```{r pressure, echo=FALSE}
+samples = c("A5_1","A5_2","A6_1", "A6_2","V1","V2")
+
+
+colData = data.frame(sampleCondition)
+rownames(colData) = colnames(data_repeats)
+colnames(colData) = c("condition")
+colnames(data_repeats) = samples
+condition = factor(sampleCondition)
+#DESeq steps
+dds = DESeqDataSetFromMatrix(countData=data_repeats,
+                             colData = colData,
+                             design = ~ condition)
+
+```
+
+
+
+
+```{r pressure, echo=FALSE}
+dds = DESeq(dds)
+norm<-counts(dds, normalize=TRUE)
+write.csv(norm,file="normalized.counts.TE.txt",quote=FALSE)
+rld <- rlog(dds)
+```
+
+
+
+```{r pressure, echo=FALSE}
+plotPCA(rld, intgroup="condition")
+vsd <- varianceStabilizingTransformation(dds, blind=FALSE)
+write.table(assay(vsd),"VSTnorm.TEs.txt",quote=FALSE)
+library(ggplot2)
+data <- plotPCA(rld, returnData=TRUE)
+
+
+```
+
+
+```{r pressure, echo=FALSE}
+#this plots pca based off of condition
+percentVar <- round(100 * attr(data, "percentVar"))
+pdf("cddo_im_vs_control_PCA.pdf",width=8,height=5,useDingbats = FALSE)
+ggplot(data, aes(PC1, PC2, color=condition)) +
+  geom_point(size=10) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  theme(text = element_text(size=30))
+dev.off()
+#this plots pca based off of sample name:
+pdf("cddo_im_vs_control_PCA2.pdf",width=8,height=5,useDingbats = FALSE)
+ggplot(data, aes(PC1, PC2, color=name)) +
+  geom_point(size=10) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  theme(text = element_text(size=30))
+dev.off()
+
+```
+
+```{r pressure, echo=FALSE}
+norm_counts = counts(dds, normalize=TRUE)
+norm_counts_avg = NULL
+norm_counts_avg = cbind(norm_counts_avg, rowMeans(norm_counts[,1:2]), rowMeans(norm_counts[,3:4]),rowMeans(norm_counts[,5:6]))
+colnames(norm_counts_avg) = c("cddo-im", "control", "Vector")
+norm_counts_avg_log = log(norm_counts_avg+1, 10)
+#comparisons
+comparisons = rbind(c("cddo-im" ,"control"))
+
+```
+
+```{r pressure, echo=FALSE}
+#|log2FC| > 0.5 and adj pval <0.1
+for(i in 1:nrow(comparisons)){
+  res = results(dds, c("condition", comparisons[i,1], comparisons[i,2]))
+  res_sig = res[abs(res[,2]) > 0.5 & res[,6] < 0.1 & !is.na(res[,6]),]
+  nrow(res_sig)
+  assign(paste(comparisons[i,1], "_", comparisons[i,2], sep = ""), res)
+  assign(paste(comparisons[i,1], "_", comparisons[i,2], "_sig_fc0.5_FDR10", sep = ""), res_sig)
+}
+
+
+write.csv(A5_Vector_sig_fc0.5_FDR10, file="cddo-im_control_sig_fc0.5_FDR10.csv",quote=FALSE)
+
+```
